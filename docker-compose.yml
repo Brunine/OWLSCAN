@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  owlscan:
+    build: .
+    image: owlscan:local
+    container_name: owlscan
+    # Raw sockets (masscan TX + nmap -sS) need NET_RAW; masscan's custom
+    # TCP/IP stack also wants NET_ADMIN. network_mode: host gives masscan
+    # direct access to the host's interfaces, which it generally needs.
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    network_mode: host
+    volumes:
+      - ./reports:/app/reports
+      - ./owlscan.toml:/app/owlscan.toml:ro
+    # Example: docker compose run --rm owlscan scan --target 10.0.0.0/24 --ports 1-1000
+    command: ["--help"]
