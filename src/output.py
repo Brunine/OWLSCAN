@@ -59,6 +59,7 @@ def generate_jsonl(out_dir: Path, cfg: ScanConfig, target_label: str) -> Path:
                 "open_ports": sorted(int(p.split("/")[0]) for p in data["ports"]),
                 "services": services,
                 "honeypot": data["honeypot"],
+                "web_services": data.get("web", []),
                 "evasion": cfg.evasion_profile,
                 "timestamp": datetime.now().isoformat(timespec="seconds"),
             }
@@ -77,6 +78,7 @@ def print_json_console(cfg: ScanConfig) -> None:
             "open_ports": sorted(int(p.split("/")[0]) for p in data["ports"]),
             "services": services,
             "honeypot": data["honeypot"],
+            "web_services": data.get("web", []),
         })
     console.print_json(json.dumps(records))
 
@@ -119,6 +121,15 @@ def generate_markdown(out_dir: Path, cfg: ScanConfig) -> Path:
             svc = data["services"].get(port_num, "—")
             lines.append(f"| `{port}` | {svc} |")
         lines.append("")
+
+        web_entries = data.get("web", [])
+        if web_entries:
+            lines.append("**Web services (dirsearch):**")
+            lines.append("")
+            for w in web_entries:
+                url = f"{w['scheme']}://{ip}:{w['port']}/"
+                lines.append(f"- `{url}` — {w['dirsearch']}")
+            lines.append("")
 
     path = out_dir / "owlscan_report.md"
     path.write_text("\n".join(lines))
@@ -166,8 +177,8 @@ def generate_xlsx(out_dir: Path, cfg: ScanConfig) -> Optional[Path]:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Findings"
-    headers = ["Host", "Port", "Protocol", "Service / Version", "Honeypot", "Raw Nmap Line"]
-    widths = [18, 10, 12, 40, 12, 50]
+    headers = ["Host", "Port", "Protocol", "Service / Version", "Honeypot", "Web?", "Raw Nmap Line"]
+    widths = [18, 10, 12, 40, 12, 30, 50]
     for col_idx, (h, w) in enumerate(zip(headers, widths), 1):
         ws.column_dimensions[get_column_letter(col_idx)].width = w
         cell = ws.cell(row=1, column=col_idx, value=h)
@@ -177,15 +188,19 @@ def generate_xlsx(out_dir: Path, cfg: ScanConfig) -> Optional[Path]:
 
     row = 2
     for ip, data in sorted(findings.items(), key=lambda x: sort_key_ip(x[0])):
+        web_by_port = {w["port"]: w for w in data.get("web", [])}
         for port in sorted(data["ports"], key=lambda p: int(p.split("/")[0])):
             port_num, proto = (port.split("/") + ["tcp"])[:2]
             svc = data["services"].get(port_num, "")
+            w = web_by_port.get(port_num)
+            web_str = f"{w['scheme']} — {w['dirsearch']}" if w else ""
             ws.cell(row=row, column=1, value=ip)
             ws.cell(row=row, column=2, value=int(port_num))
             ws.cell(row=row, column=3, value=proto)
             ws.cell(row=row, column=4, value=svc)
             ws.cell(row=row, column=5, value="YES" if data["honeypot"] else "")
-            ws.cell(row=row, column=6, value=svc)
+            ws.cell(row=row, column=6, value=web_str)
+            ws.cell(row=row, column=7, value=svc)
             row += 1
 
     path = out_dir / "owlscan_report.xlsx"

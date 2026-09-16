@@ -29,7 +29,7 @@ import click
 from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
-from . import __version__
+from . import __version__, webscan
 from .config import DEFAULTS, EVASION_PROFILES, ScanConfig, resolve_defaults, resolve_masscan_rate
 from .engine import check_tools, findings, get_network_size, is_root, reset_findings, run_masscan, sort_key_ip
 from .log import banner, console, log, setup_file_logger
@@ -82,6 +82,16 @@ def _build_config(
     json_console: bool,
     excel: bool,
     docker: bool,
+    dirsearch: Optional[bool],
+    dirsearch_bin: Optional[str],
+    dirsearch_wordlist: Optional[str],
+    dirsearch_threads: Optional[int],
+    dirsearch_extensions: Optional[str],
+    dirsearch_exclude_status: Optional[str],
+    dirsearch_max_rate: Optional[int],
+    dirsearch_user_agent: Optional[str],
+    dirsearch_tmux: Optional[bool],
+    dirsearch_session: Optional[str],
 ) -> ScanConfig:
     merged = resolve_defaults(config_path)
 
@@ -112,6 +122,16 @@ def _build_config(
         json_console=json_console,
         excel=excel,
         docker=docker,
+        dirsearch=merged["dirsearch"] if dirsearch is None else dirsearch,
+        dirsearch_bin=dirsearch_bin or merged["dirsearch_bin"],
+        dirsearch_wordlist=dirsearch_wordlist or merged["dirsearch_wordlist"],
+        dirsearch_threads=dirsearch_threads or merged["dirsearch_threads"],
+        dirsearch_extensions=dirsearch_extensions or merged["dirsearch_extensions"],
+        dirsearch_exclude_status=dirsearch_exclude_status or merged["dirsearch_exclude_status"],
+        dirsearch_max_rate=dirsearch_max_rate or merged["dirsearch_max_rate"],
+        dirsearch_user_agent=dirsearch_user_agent or merged["dirsearch_user_agent"],
+        dirsearch_tmux=merged["dirsearch_tmux"] if dirsearch_tmux is None else dirsearch_tmux,
+        dirsearch_session=dirsearch_session or merged["dirsearch_session"],
     )
     return cfg
 
@@ -194,6 +214,18 @@ def version() -> None:
 @click.option("--json", "json_console", is_flag=True, help="Print console output as one JSON array instead of a table.")
 @click.option("--excel", is_flag=True, help="Also write an .xlsx report (requires openpyxl).")
 @click.option("--docker", is_flag=True, help="Run masscan/nmap inside the bundled Docker image instead of natively.")
+@click.option("--dirsearch/--no-dirsearch", default=None,
+              help="Auto-run dirsearch against any host:port nmap identifies as a web service.")
+@click.option("--dirsearch-bin", help="dirsearch executable name/path (default: dirsearch).")
+@click.option("--dirsearch-wordlist", help="Wordlist path passed to dirsearch's -w.")
+@click.option("--dirsearch-threads", type=int, help="dirsearch thread count (-t).")
+@click.option("--dirsearch-extensions", help="Comma-separated extensions for dirsearch's -e.")
+@click.option("--dirsearch-exclude-status", help="Comma-separated status codes to exclude, e.g. 404,400.")
+@click.option("--dirsearch-max-rate", type=int, help="dirsearch --max-rate (requests/sec).")
+@click.option("--dirsearch-user-agent", help="User-Agent string dirsearch sends.")
+@click.option("--dirsearch-tmux/--no-dirsearch-tmux", default=None,
+              help="Run each dirsearch in its own tmux window for live follow (default: on if tmux is installed).")
+@click.option("--dirsearch-session", help="tmux session name dirsearch windows are grouped under.")
 @click.option("--yes", "-y", is_flag=True, help="Skip the confirmation prompt.")
 @click.pass_context
 def scan(
@@ -214,6 +246,16 @@ def scan(
     json_console: bool,
     excel: bool,
     docker: bool,
+    dirsearch: Optional[bool],
+    dirsearch_bin: Optional[str],
+    dirsearch_wordlist: Optional[str],
+    dirsearch_threads: Optional[int],
+    dirsearch_extensions: Optional[str],
+    dirsearch_exclude_status: Optional[str],
+    dirsearch_max_rate: Optional[int],
+    dirsearch_user_agent: Optional[str],
+    dirsearch_tmux: Optional[bool],
+    dirsearch_session: Optional[str],
     yes: bool,
 ) -> None:
     """Discover hosts with masscan, then deep-scan each with nmap."""
@@ -229,6 +271,9 @@ def scan(
         config_path, target, ports, evasion, output_dir, threads, timeout,
         honeypot_threshold, decoys, interface, formats, masscan_rate, log_file,
         json_console, excel, docker,
+        dirsearch, dirsearch_bin, dirsearch_wordlist, dirsearch_threads,
+        dirsearch_extensions, dirsearch_exclude_status, dirsearch_max_rate,
+        dirsearch_user_agent, dirsearch_tmux, dirsearch_session,
     )
     if not cfg.ports:
         raise click.ClickException("--ports is required, e.g. --ports 1-1000")
@@ -255,6 +300,12 @@ def scan(
     log("info", f"Masscan rate   : {cfg.masscan_rate} pps")
     log("info", f"Nmap threads   : {cfg.nmap_threads}")
     log("info", f"Output dir     : {cfg.output_dir}")
+    if cfg.dirsearch:
+        mode = f"tmux (session '{cfg.dirsearch_session}')" if cfg.dirsearch_tmux else "background"
+        log("info", f"Dirsearch      : on, auto-detected web services, {mode}")
+        webscan.check_optional_tools(cfg)
+    else:
+        log("info", "Dirsearch      : off")
 
     if not yes:
         if not click.confirm("\nStart scan?", default=True):
@@ -306,10 +357,18 @@ def _print_summary_table() -> None:
     table.add_column("Open Ports")
     table.add_column("Services")
     table.add_column("Honeypot?")
+    table.add_column("Dirsearch")
     for ip, data in sorted(findings.items(), key=lambda x: sort_key_ip(x[0])):
         ports_str = ", ".join(sorted(data["ports"], key=lambda p: int(p.split("/")[0])))
         services_str = ", ".join(f"{p}:{s}" for p, s in list(data["services"].items())[:3]) or "—"
-        table.add_row(ip, ports_str or "—", services_str, "⚠️ YES" if data["honeypot"] else "—")
+        web_entries = data.get("web", [])
+        if web_entries:
+            web_str = "\n".join(
+                f"{w['scheme']}://{ip}:{w['port']}  [{w['dirsearch']}]" for w in web_entries
+            )
+        else:
+            web_str = "—"
+        table.add_row(ip, ports_str or "—", services_str, "⚠️ YES" if data["honeypot"] else "—", web_str)
     console.print(table)
 
 
@@ -428,15 +487,29 @@ def _run_interactive_wizard() -> int:
         threads = click.prompt("Nmap threads", default=10, type=int)
         timeout = click.prompt("Nmap per-host timeout (s)", default=600, type=int)
         honeypot_thresh = click.prompt("Honeypot port-count threshold", default=100, type=int)
+        run_dirsearch = click.confirm(
+            "Auto-run dirsearch against detected web services?", default=True
+        )
     except (click.Abort, EOFError, KeyboardInterrupt):
         console.print()
         return EXIT_INTERRUPTED
 
+    merged = resolve_defaults(None)
     cfg = ScanConfig(
         ranges=ranges, ports=ports, evasion_profile=evasion_choice,
         masscan_rate=EVASION_PROFILES[evasion_choice]["masscan_rate"],
         nmap_threads=threads, nmap_timeout=timeout, honeypot_threshold=honeypot_thresh,
         output_formats=["json"], output_dir=Path(output_dir),
+        dirsearch=run_dirsearch,
+        dirsearch_bin=merged["dirsearch_bin"],
+        dirsearch_wordlist=merged["dirsearch_wordlist"],
+        dirsearch_threads=merged["dirsearch_threads"],
+        dirsearch_extensions=merged["dirsearch_extensions"],
+        dirsearch_exclude_status=merged["dirsearch_exclude_status"],
+        dirsearch_max_rate=merged["dirsearch_max_rate"],
+        dirsearch_user_agent=merged["dirsearch_user_agent"],
+        dirsearch_tmux=merged["dirsearch_tmux"],
+        dirsearch_session=merged["dirsearch_session"],
     )
 
     missing = check_tools()
@@ -446,6 +519,8 @@ def _run_interactive_wizard() -> int:
 
     setup_file_logger(None)
     _root_hint()
+    if cfg.dirsearch:
+        webscan.check_optional_tools(cfg)
     reset_findings()
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     cfg.scan_start = datetime.now()

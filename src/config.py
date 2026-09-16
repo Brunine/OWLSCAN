@@ -84,6 +84,21 @@ DEFAULTS: dict[str, Any] = {
     "output_formats": ["json"],
     "interface": None,
     "log_file": None,
+    # Dirsearch (web content discovery), auto-triggered off nmap's own
+    # service detection rather than a fixed port list.
+    "dirsearch": True,
+    "dirsearch_bin": "dirsearch",
+    "dirsearch_wordlist": "/usr/share/wordlists/dirbuster_wordlist/directory-list-2.3-medium.txt",
+    "dirsearch_threads": 5,
+    "dirsearch_extensions": "html,json,js,txt,bkp,php,jsp,asp,aspx",
+    "dirsearch_exclude_status": "404,400",
+    "dirsearch_max_rate": 100,
+    "dirsearch_user_agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36 (Pentest Access Security)"
+    ),
+    "dirsearch_tmux": True,
+    "dirsearch_session": "owlscan",
 }
 
 _ENV_PREFIX = "OWLSCAN_"
@@ -99,9 +114,23 @@ _ENV_KEYS = {
     "OUTPUT_DIR": "output_dir",
     "INTERFACE": "interface",
     "LOG_FILE": "log_file",
+    "DIRSEARCH": "dirsearch",
+    "DIRSEARCH_BIN": "dirsearch_bin",
+    "DIRSEARCH_WORDLIST": "dirsearch_wordlist",
+    "DIRSEARCH_THREADS": "dirsearch_threads",
+    "DIRSEARCH_EXTENSIONS": "dirsearch_extensions",
+    "DIRSEARCH_EXCLUDE_STATUS": "dirsearch_exclude_status",
+    "DIRSEARCH_MAX_RATE": "dirsearch_max_rate",
+    "DIRSEARCH_USER_AGENT": "dirsearch_user_agent",
+    "DIRSEARCH_TMUX": "dirsearch_tmux",
+    "DIRSEARCH_SESSION": "dirsearch_session",
 }
 
-_INT_KEYS = {"masscan_rate", "nmap_threads", "nmap_timeout", "honeypot_threshold"}
+_INT_KEYS = {
+    "masscan_rate", "nmap_threads", "nmap_timeout", "honeypot_threshold",
+    "dirsearch_threads", "dirsearch_max_rate",
+}
+_BOOL_KEYS = {"dirsearch", "dirsearch_tmux"}
 
 
 @dataclass
@@ -123,6 +152,16 @@ class ScanConfig:
     json_console: bool = False
     excel: bool = False
     docker: bool = False
+    dirsearch: bool = True
+    dirsearch_bin: str = "dirsearch"
+    dirsearch_wordlist: str = "/usr/share/wordlists/dirbuster_wordlist/directory-list-2.3-medium.txt"
+    dirsearch_threads: int = 5
+    dirsearch_extensions: str = "html,json,js,txt,bkp,php,jsp,asp,aspx"
+    dirsearch_exclude_status: str = "404,400"
+    dirsearch_max_rate: int = 100
+    dirsearch_user_agent: str = ""
+    dirsearch_tmux: bool = True
+    dirsearch_session: str = "owlscan"
     scan_start: Optional[object] = None
     scan_end: Optional[object] = None
 
@@ -169,6 +208,8 @@ def load_env_overrides() -> dict[str, Any]:
                 overrides[key] = int(raw)
             except ValueError:
                 continue
+        elif key in _BOOL_KEYS:
+            overrides[key] = raw.strip().lower() in {"1", "true", "yes", "on"}
         else:
             overrides[key] = raw
     return overrides

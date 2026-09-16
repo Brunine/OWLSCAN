@@ -1,3 +1,27 @@
+Metadata-Version: 2.4
+Name: owlscan
+Version: 2.0.0
+Summary: Internal pentest network-segmentation scanner — Masscan discovery + Nmap full/deep scan with evasion profiles and honeypot detection.
+Author: OwlScan Maintainers
+License: MIT
+Keywords: pentest,nmap,masscan,network,security,cli
+Classifier: Development Status :: 4 - Beta
+Classifier: Environment :: Console
+Classifier: Intended Audience :: Information Technology
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Topic :: Security
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: click>=8.1
+Requires-Dist: rich>=13.7
+Requires-Dist: loguru>=0.7
+Requires-Dist: tomli>=2.0; python_version < "3.11"
+Provides-Extra: excel
+Requires-Dist: openpyxl>=3.1; extra == "excel"
+
 # OwlScan
 
 Internal pentest / network-segmentation scanner. Wraps **masscan** (fast port
@@ -69,71 +93,6 @@ docker run --rm --cap-add=NET_RAW --cap-add=NET_ADMIN --network host \
 | `paranoid` | 50 pps | T1 | Double-fragmented, HTTPS source-port, 500ms delay |
 | `docker` | 500 pps | T3 | `-Pn`, TCP-connect, defeats RST rate-limiting |
 
-## Auto dirsearch on discovered web services
-
-When nmap's own service detection (`-sV`) identifies a port as running
-something HTTP-like, OwlScan automatically launches
-[dirsearch](https://github.com/maurosoria/dirsearch) against it — no fixed
-port list involved. Classification looks at nmap's service name *and*
-version/banner string for `http`, so it also catches web UIs on odd ports
-(8834, 9443, custom management ports, etc.), not just :80/:443.
-
-Equivalent to running, per discovered host:port:
-
-```bash
-dirsearch -u http://<host>:<port>/ \
-  --user-agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/104.0.0.0 Safari/537.36 (Pentest Access Security)" \
-  -w /usr/share/wordlists/dirbuster_wordlist/directory-list-2.3-medium.txt \
-  -t 5 -e html,json,js,txt,bkp,php,jsp,asp,aspx -r \
-  --exclude-status='404,400' --max-rate=100
-```
-
-`https://` is used automatically when nmap reports the service as
-TLS-wrapped (`ssl/http`, `https`, etc.).
-
-**Following it live with tmux**: each dirsearch run gets its own tmux window
-under a shared session (default name `owlscan`), so you can watch every host
-being brute-forced as it happens:
-
-```bash
-tmux attach -t owlscan     # while a scan is running, in another terminal
-# Ctrl-b w  → window picker, or Ctrl-b n / Ctrl-b p to cycle windows
-```
-
-Each window stays open (with a "finished" banner) after dirsearch completes,
-so you don't lose the output — press Enter in that window to close it.
-Results are also always written to `<output>/dirsearch/<host>_<port>.txt`
-regardless of tmux, and referenced in the JSON/JSONL/Markdown/Excel reports.
-
-If `tmux` isn't installed, OwlScan falls back to running dirsearch as a
-background process per host:port, logging to
-`<output>/dirsearch/<host>_<port>.log` instead.
-
-Relevant `scan` flags:
-
-| Flag | Description |
-|---|---|
-| `--dirsearch` / `--no-dirsearch` | Enable/disable the whole feature (default: on) |
-| `--dirsearch-bin` | dirsearch executable name/path |
-| `--dirsearch-wordlist` | Wordlist passed to `-w` |
-| `--dirsearch-threads` | `-t` thread count |
-| `--dirsearch-extensions` | `-e` comma-separated extensions |
-| `--dirsearch-exclude-status` | `--exclude-status` codes |
-| `--dirsearch-max-rate` | `--max-rate` requests/sec |
-| `--dirsearch-user-agent` | User-Agent string |
-| `--dirsearch-tmux` / `--no-dirsearch-tmux` | Use tmux windows vs. plain background processes |
-| `--dirsearch-session` | tmux session name windows are grouped under |
-
-**Docker caveat**: if you run `owlscan scan --docker` (or run the container
-directly) and dirsearch is still running in the background/tmux when the
-main scan command exits, those processes die with the container unless you
-keep it alive — e.g. run with `docker compose run` in a shell that stays
-open, or `docker exec -it <container> tmux attach -t owlscan` before the
-main process finishes.
-
-Install dirsearch with `pip install dirsearch`, or it's already bundled in
-the provided `Dockerfile`.
-
 ## Configuration
 
 Resolution order (highest wins): CLI flags → `--config` file → `./owlscan.toml`
@@ -141,12 +100,7 @@ Resolution order (highest wins): CLI flags → `--config` file → `./owlscan.to
 
 Environment overrides: `OWLSCAN_EVASION`, `OWLSCAN_OUTPUT_DIR`,
 `OWLSCAN_NMAP_THREADS`, `OWLSCAN_NMAP_TIMEOUT`, `OWLSCAN_HONEYPOT_THRESHOLD`,
-`OWLSCAN_DECOY_LIST`, `OWLSCAN_INTERFACE`, `OWLSCAN_LOG_FILE`,
-`OWLSCAN_DIRSEARCH`, `OWLSCAN_DIRSEARCH_BIN`, `OWLSCAN_DIRSEARCH_WORDLIST`,
-`OWLSCAN_DIRSEARCH_THREADS`, `OWLSCAN_DIRSEARCH_EXTENSIONS`,
-`OWLSCAN_DIRSEARCH_EXCLUDE_STATUS`, `OWLSCAN_DIRSEARCH_MAX_RATE`,
-`OWLSCAN_DIRSEARCH_USER_AGENT`, `OWLSCAN_DIRSEARCH_TMUX`,
-`OWLSCAN_DIRSEARCH_SESSION`.
+`OWLSCAN_DECOY_LIST`, `OWLSCAN_INTERFACE`, `OWLSCAN_LOG_FILE`.
 
 ## Exit codes
 

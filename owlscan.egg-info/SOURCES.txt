@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+owlscan.egg-info/PKG-INFO
+owlscan.egg-info/SOURCES.txt
+owlscan.egg-info/dependency_links.txt
+owlscan.egg-info/entry_points.txt
+owlscan.egg-info/requires.txt
+owlscan.egg-info/top_level.txt

@@ -1,0 +1,9 @@
+click>=8.1
+rich>=13.7
+loguru>=0.7
+
+[:python_version < "3.11"]
+tomli>=2.0
+
+[excel]
+openpyxl>=3.1

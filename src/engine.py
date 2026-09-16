@@ -23,6 +23,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+from . import webscan
 from .config import EVASION_PROFILES, ScanConfig
 from .log import log
 
@@ -72,15 +73,22 @@ def check_tools(use_docker: bool = False) -> list[str]:
 findings_lock = threading.Lock()
 findings: dict[str, dict] = {}
 
+_dirsearch_launched: set[tuple[str, str]] = set()
+
+
+def _default_entry() -> dict:
+    return {"ports": [], "services": {}, "honeypot": False, "web": []}
+
 
 def reset_findings() -> None:
     with findings_lock:
         findings.clear()
+        _dirsearch_launched.clear()
 
 
 def record_open_port(ip: str, port: str, proto: str = "tcp") -> None:
     with findings_lock:
-        entry = findings.setdefault(ip, {"ports": [], "services": {}, "honeypot": False})
+        entry = findings.setdefault(ip, _default_entry())
         tag = f"{port}/{proto}"
         if tag not in entry["ports"]:
             entry["ports"].append(tag)
@@ -88,7 +96,7 @@ def record_open_port(ip: str, port: str, proto: str = "tcp") -> None:
 
 def record_service(ip: str, port: str, banner: str) -> None:
     with findings_lock:
-        entry = findings.setdefault(ip, {"ports": [], "services": {}, "honeypot": False})
+        entry = findings.setdefault(ip, _default_entry())
         entry["services"][port] = banner
 
 
@@ -96,6 +104,38 @@ def mark_honeypot(ip: str) -> None:
     with findings_lock:
         if ip in findings:
             findings[ip]["honeypot"] = True
+
+
+def record_web_target(ip: str, port: str, scheme: str, status: Optional[str]) -> None:
+    with findings_lock:
+        entry = findings.setdefault(ip, _default_entry())
+        entry.setdefault("web", []).append({
+            "port": port, "scheme": scheme, "dirsearch": status or "not_launched",
+        })
+
+
+def _claim_dirsearch_slot(ip: str, port: str) -> bool:
+    """Returns True if this is the first time we've seen ip:port — i.e. the
+    caller should launch dirsearch for it."""
+    with findings_lock:
+        key = (ip, port)
+        if key in _dirsearch_launched:
+            return False
+        _dirsearch_launched.add(key)
+        return True
+
+
+def maybe_launch_dirsearch(ip: str, port: str, service: str, extra: str, cfg: ScanConfig) -> None:
+    if not cfg.dirsearch:
+        return
+    is_tls = webscan.classify_web_service(service, extra)
+    if is_tls is None:
+        return
+    if not _claim_dirsearch_slot(ip, port):
+        return
+    scheme = "https" if is_tls else "http"
+    status = webscan.launch_dirsearch(ip, port, is_tls, cfg)
+    record_web_target(ip, port, scheme, status)
 
 
 def sort_key_ip(ip: str):
@@ -252,6 +292,7 @@ def run_nmap_deep(ip: str, ports: str, base_output: Path, cfg: ScanConfig) -> No
                 if svc_match:
                     port, service, extra = svc_match.groups()
                     record_service(ip, port, f"{service} {extra}".strip())
+                    maybe_launch_dirsearch(ip, port, service, extra, cfg)
                 return None
 
             rc, timed_out = _run_subprocess_with_timeout(cmd_deep, cfg.nmap_timeout, f, on_line)
